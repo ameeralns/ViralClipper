@@ -15,6 +15,10 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import GetAppIcon from '@mui/icons-material/GetApp';
 import ShareIcon from '@mui/icons-material/Share';
 
+// Use the environment variable REACT_APP_API_URL for the production endpoint
+// Fall back to relative path /api for local development
+const API_BASE_URL = process.env.REACT_APP_API_URL ? `${process.env.REACT_APP_API_URL}/api` : '/api';
+
 export default function ClipCard({ clip }) {
   console.log('ClipCard received:', clip, 'URL:', clip?.url);
   const [playing, setPlaying] = useState(false);
@@ -22,10 +26,10 @@ export default function ClipCard({ clip }) {
   const [videoError, setVideoError] = useState(false);
   const [useDirect, setUseDirect] = useState(false);
   
-  // Create proxied URL
+  // Create proxied URL using the correct base URL
   const getProxiedUrl = (originalUrl, forDownload = false) => {
     if (!originalUrl) return null;
-    return `/api/proxy-video?url=${encodeURIComponent(originalUrl)}${forDownload ? '&download=true' : ''}`;
+    return `${API_BASE_URL}/proxy-video?url=${encodeURIComponent(originalUrl)}${forDownload ? '&download=true' : ''}`;
   };
   
   // Choose URL based on error state
