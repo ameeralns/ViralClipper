@@ -1109,14 +1109,18 @@ apiRouter.get('/reels', async (req, res) => {
 // Add a proxy endpoint for fetching videos from GCS
 app.get('/api/proxy-video', async (req, res) => {
   const videoUrl = req.query.url;
+  const download = req.query.download === 'true';
   
   if (!videoUrl) {
     return res.status(400).send('Video URL is required');
   }
   
   try {
-    // Extract the path from the URL (after storage.googleapis.com/bucket-name/)
+    // Extract filename from URL
     const urlObj = new URL(videoUrl);
+    const filename = urlObj.pathname.split('/').pop() || 'video.mp4';
+    
+    // Extract the path from the URL (after storage.googleapis.com/bucket-name/)
     const pathMatch = urlObj.pathname.match(/\/([^\/]+)\/(.+)/);
     
     if (!pathMatch || !storage) {
@@ -1132,8 +1136,12 @@ app.get('/api/proxy-video', async (req, res) => {
       res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
       
-      // Forward content type header
-      res.setHeader('Content-Type', response.headers['content-type']);
+      // Set Content-Type and Content-Disposition headers
+      res.setHeader('Content-Type', response.headers['content-type'] || 'video/mp4');
+      
+      if (download) {
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      }
       
       // Pipe the video stream to the response
       response.data.pipe(res);
@@ -1141,55 +1149,78 @@ app.get('/api/proxy-video', async (req, res) => {
     }
     
     // Use Firebase Admin SDK to get a signed URL
-    const bucket = storage.bucket(pathMatch[1]);
-    const file = bucket.file(pathMatch[2]);
-    
-    // Generate a signed URL that expires in 1 hour
-    const [signedUrl] = await file.getSignedUrl({
-      action: 'read',
-      expires: Date.now() + 3600000 // 1 hour
-    });
-    
-    console.log('Generated signed URL for video access');
-    
-    // Redirect to the signed URL
-    res.redirect(signedUrl);
+    try {
+      const bucket = storage.bucket(pathMatch[1]);
+      const file = bucket.file(pathMatch[2]);
+      
+      // Generate a signed URL that expires in 1 hour
+      const [signedUrl] = await file.getSignedUrl({
+        action: 'read',
+        expires: Date.now() + 3600000 // 1 hour
+      });
+      
+      console.log('Generated signed URL for video access');
+      
+      if (download) {
+        // For downloads, stream through our server with proper headers
+        const response = await axios({
+          method: 'get',
+          url: signedUrl,
+          responseType: 'stream'
+        });
+        
+        // Set download headers
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        
+        // Stream the response
+        response.data.pipe(res);
+      } else {
+        // For playback, redirect to the signed URL
+        res.redirect(signedUrl);
+      }
+    } catch (signedUrlError) {
+      console.error('Error generating signed URL:', signedUrlError);
+      
+      // Try fallback to direct streaming
+      try {
+        console.log('Trying direct access as fallback...');
+        const bucket = storage.bucket(process.env.FIREBASE_STORAGE_BUCKET);
+        
+        // Extract the file path from the URL
+        const filePath = urlObj.pathname.split('/').slice(2).join('/');
+        
+        console.log('Accessing file:', filePath);
+        const file = bucket.file(filePath);
+        
+        // Check if file exists
+        const [exists] = await file.exists();
+        if (!exists) {
+          return res.status(404).send('Video file not found');
+        }
+        
+        // Stream the file directly
+        const readStream = file.createReadStream();
+        
+        // Set headers
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        
+        if (download) {
+          res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        }
+        
+        // Pipe file to response
+        readStream.pipe(res);
+      } catch (fallbackError) {
+        console.error('Fallback access failed:', fallbackError);
+        res.status(500).send('Error fetching video');
+      }
+    }
   } catch (error) {
     console.error('Error proxying video:', error);
-    
-    // Try fallback to direct access as last resort
-    try {
-      console.log('Trying direct file access as fallback...');
-      // Try direct streaming from Firebase Storage
-      const bucket = storage.bucket(process.env.FIREBASE_STORAGE_BUCKET);
-      
-      // Extract the file path from the URL
-      const urlObj = new URL(videoUrl);
-      const filePath = urlObj.pathname.split('/').slice(2).join('/');
-      
-      console.log('Accessing file:', filePath);
-      const file = bucket.file(filePath);
-      
-      // Check if file exists
-      const [exists] = await file.exists();
-      if (!exists) {
-        return res.status(404).send('Video file not found');
-      }
-      
-      // Stream the file directly
-      const readStream = file.createReadStream();
-      
-      // Set headers
-      res.setHeader('Content-Type', 'video/mp4');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-      
-      // Pipe file to response
-      readStream.pipe(res);
-    } catch (fallbackError) {
-      console.error('Fallback access failed:', fallbackError);
-      res.status(500).send('Error fetching video');
-    }
+    res.status(500).send('Error fetching video');
   }
 });
 

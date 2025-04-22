@@ -23,9 +23,9 @@ export default function ClipCard({ clip }) {
   const [useDirect, setUseDirect] = useState(false);
   
   // Create proxied URL
-  const getProxiedUrl = (originalUrl) => {
+  const getProxiedUrl = (originalUrl, forDownload = false) => {
     if (!originalUrl) return null;
-    return `/api/proxy-video?url=${encodeURIComponent(originalUrl)}`;
+    return `/api/proxy-video?url=${encodeURIComponent(originalUrl)}${forDownload ? '&download=true' : ''}`;
   };
   
   // Choose URL based on error state
@@ -53,10 +53,12 @@ export default function ClipCard({ clip }) {
   
   const handleDownload = () => {
     if (clip.url) {
+      // Always use the proxy URL for downloads with download flag
+      const proxyUrl = getProxiedUrl(clip.url, true);
+      
       const link = document.createElement('a');
-      link.href = clip.url;
+      link.href = proxyUrl;
       link.download = `${clip.clip_caption || 'clip'}.mp4`;
-      link.target = '_blank';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);

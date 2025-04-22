@@ -252,12 +252,14 @@ const VideoDetails = () => {
                     // Download all clips in sequence
                     video.clips.forEach((clip, index) => {
                       if (clip.url) {
+                        // Use proxy URL for downloads with download flag
+                        const proxyUrl = `/api/proxy-video?url=${encodeURIComponent(clip.url)}&download=true`;
+                        
                         // Small delay between downloads to avoid browser blocking
                         setTimeout(() => {
                           const link = document.createElement('a');
-                          link.href = clip.url;
+                          link.href = proxyUrl;
                           link.download = `${videoTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_clip_${index + 1}.mp4`;
-                          link.target = '_blank';
                           document.body.appendChild(link);
                           link.click();
                           document.body.removeChild(link);
