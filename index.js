@@ -10,12 +10,25 @@ const OpenAI = require('openai');
 const PocketBase = require('pocketbase/cjs');
 const ffmpeg = require('fluent-ffmpeg');
 const ytdlp = require('yt-dlp-exec');
+const cors = require('cors');
 const { db, storage } = require('./firebaseAdmin');
 const { ref, uploadBytes, getDownloadURL } = require('firebase-admin/storage');
 const admin = require('firebase-admin');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Configure CORS
+app.use(cors({
+  origin: [
+    'http://localhost:3000',
+    // Replace the line below with your actual Vercel URL after deployment
+    // Example: 'https://viralclipper.vercel.app'
+    'https://viralclipper.vercel.app' 
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true
+}));
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
