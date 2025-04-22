@@ -13,6 +13,7 @@ import {
 import YouTubeIcon from '@mui/icons-material/YouTube';
 import api from '../services/api';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 
 const VideoUrlForm = () => {
   const [videoUrl, setVideoUrl] = useState('');
@@ -20,6 +21,7 @@ const VideoUrlForm = () => {
   const [error, setError] = useState('');
   const [showError, setShowError] = useState(false);
   const navigate = useNavigate();
+  const { currentUser } = useAuth();
 
   const validateYouTubeUrl = (url) => {
     // Basic validation - can be enhanced
@@ -46,7 +48,9 @@ const VideoUrlForm = () => {
     // Submit URL to API
     setLoading(true);
     try {
-      const response = await api.processVideo(videoUrl);
+      // Pass the current user's ID if authenticated
+      const userId = currentUser ? currentUser.uid : 'anonymous';
+      const response = await api.processVideo(videoUrl, userId);
       console.log('Processing started:', response);
       
       // Navigate to video details page

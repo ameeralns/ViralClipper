@@ -1,25 +1,29 @@
 # YouTube to Viral Clips Processor
 
-This service transforms long YouTube videos into short clips optimized for short-form video platforms. It uses Deepgram to analyze audio sentiment and Google Gemini to identify the most engaging moments, then automatically clips those segments for you.
+This service transforms long YouTube videos into short clips optimized for short-form video platforms. It uses Deepgram to analyze audio sentiment and Google Gemini or OpenAI to identify the most engaging moments, then automatically clips those segments for you.
 
 ## Features
 
 - 🎬 Process YouTube videos into multiple viral-worthy clips
 - 🔊 Analyze audio sentiment with Deepgram
-- 🧠 AI-powered clip selection with Google Gemini
+- 🧠 AI-powered clip selection with Google Gemini or OpenAI
 - 📝 Auto-generate short, catchy captions for each clip
 - 🎞️ Automatic video cropping to vertical dimensions (9:16)
-- 💾 Local storage of all processed clips and original transcripts
+- 🔐 Firebase Authentication for secure access
+- 📱 Responsive web interface for easy clip management
+- 🌍 Global content delivery through Firebase Hosting
 
 ## Prerequisites
 
 - Node.js (v14+)
 - FFmpeg installed on your system
 - Deepgram API key
-- Google Gemini API key
-- PocketBase running locally (or remotely)
+- Google Gemini API key or OpenAI API key
+- Firebase project with Firestore and Storage enabled
 
-## Setup
+## Setup for Development
+
+### Backend Setup
 
 1. Clone this repository
 2. Install dependencies:
@@ -32,72 +36,101 @@ This service transforms long YouTube videos into short clips optimized for short
    GOOGLE_API_KEY=your_google_api_key
    BASE_URL=http://localhost:3000
    PORT=3000
+   FIREBASE_PROJECT_ID=your-project-id
+   FIREBASE_STORAGE_BUCKET=your-project.appspot.com
    ```
 
-4. Set up PocketBase:
-   - Download and run PocketBase from [pocketbase.io](https://pocketbase.io)
-   - Create a collection named `videos` with fields:
-     - `sourceUrl` (text)
-     - `videoUrl` (text)
-     - `requestId` (text)
-     - `userId` (text)
-     - `viralClips` (json)
-     - `processedVideoPath` (text)
-     - `finalVideoUrl` (text)
+4. Download your Firebase service account key from the Firebase console and save it as `service-account.json` in the root directory
 
 5. Start the server:
    ```
-   node index.js
+   npm run dev
    ```
 
-## Usage
+### Frontend Setup
 
-### Process a YouTube video
+1. Navigate to the client directory:
+   ```
+   cd client
+   ```
 
-```
-GET /transcribe?videoUrl=https://example.com/video.mp4&userId=user123
-```
+2. Install dependencies:
+   ```
+   npm install
+   ```
 
-Parameters:
-- `videoUrl`: URL to the source video (YouTube or direct MP4 link)
-- `userId`: Optional identifier for the user (for record keeping)
+3. Create a `.env` file with your Firebase configuration:
+   ```
+   REACT_APP_FIREBASE_API_KEY=your-api-key
+   REACT_APP_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+   REACT_APP_FIREBASE_PROJECT_ID=your-project-id
+   REACT_APP_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
+   REACT_APP_FIREBASE_MESSAGING_SENDER_ID=1234567890
+   REACT_APP_FIREBASE_APP_ID=1:1234567890:web:abcdef1234567890
+   REACT_APP_API_URL=http://localhost:3000
+   ```
 
-### Check processing status and get clips
+4. Start the React development server:
+   ```
+   npm start
+   ```
 
-```
-GET /video/{requestId}
-```
+## Deployment to Firebase
 
-### View processed clips
+1. Install the Firebase CLI:
+   ```
+   npm install -g firebase-tools
+   ```
 
-Once processed, clips are available at:
-- Individual clips: `http://localhost:3000/clips/clip_[requestId]_[index].mp4`
-- Final compilation: `http://localhost:3000/clips/final_[requestId].mp4`
+2. Login to Firebase:
+   ```
+   firebase login
+   ```
 
-### List all processed videos
+3. Initialize your project (if not already done):
+   ```
+   firebase init
+   ```
 
-```
-GET /reels
-```
+4. Build the React client:
+   ```
+   cd client
+   npm run build
+   ```
 
-To filter by user:
-```
-GET /reels?userId=user123
-```
+5. Deploy to Firebase:
+   ```
+   firebase deploy
+   ```
 
-## How It Works
+## Architecture
 
-1. Video is submitted through the `/transcribe` endpoint
-2. Deepgram processes the audio, generating transcripts with sentiment scores and timestamps
-3. Google Gemini analyzes the transcript to find the most engaging segments
-4. FFmpeg cuts the video at the exact timestamps, adds captions, and crops to vertical format
-5. Processed clips are saved locally and accessible via HTTP
+### Backend (Node.js/Express)
+- Downloads and processes videos using FFmpeg
+- Integrates with Deepgram for transcription and sentiment analysis
+- Uses AI (Google Gemini or OpenAI) for clip selection
+- Uploads processed clips to Firebase Storage
+- Stores video metadata in Firestore
 
-## Customization
+### Frontend (React)
+- Material UI components for a responsive interface
+- Authentication using Firebase Auth
+- Video upload and management
+- Clip library with search and filter capabilities
+- Sharing and download features
 
-- Modify the Gemini prompt in the `/dgwebhook` handler to change clip selection criteria
-- Adjust FFmpeg parameters to change video output format, resolution, etc.
-- Update the caption style by modifying the drawtext filter options
+## Security
+
+- Firebase Authentication for user management
+- Firestore security rules to control data access
+- Storage security rules to protect video assets
+- Backend validation for all requests
+
+## Scaling Considerations
+
+- Firebase Functions for serverless backend processing
+- Cloud Storage for video storage with CDN capabilities
+- Firestore for scalable document database
 
 ## License
 

@@ -49,3 +49,5 @@ package-lock.json
 
 # Testing
 /coverage 
+
+service-account.json

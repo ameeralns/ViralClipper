@@ -11,16 +11,23 @@ import {
   Card,
   CardContent,
   LinearProgress,
-  Chip
+  Chip,
+  Grid,
+  Paper
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import LinkIcon from '@mui/icons-material/Link';
+import VideocamIcon from '@mui/icons-material/Videocam';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import GetAppIcon from '@mui/icons-material/GetApp';
+import { formatDistanceToNow } from 'date-fns';
+import ReactPlayer from 'react-player';
 import api from '../services/api';
 import ClipCard from '../components/ClipCard';
 
 const VideoDetails = () => {
-  const { requestId } = useParams();
+  const { videoId } = useParams();
   const navigate = useNavigate();
   
   const [video, setVideo] = useState(null);
@@ -32,7 +39,7 @@ const VideoDetails = () => {
     setError('');
     
     try {
-      const data = await api.getVideoDetails(requestId);
+      const data = await api.getVideoDetails(videoId);
       setVideo(data);
     } catch (err) {
       console.error('Error fetching video details:', err);
@@ -59,7 +66,7 @@ const VideoDetails = () => {
     }, 10000); // Poll every 10 seconds
     
     return () => clearInterval(pollInterval);
-  }, [requestId, video?.status]);
+  }, [videoId, video?.status]);
   
   const handleRefresh = () => {
     fetchVideoDetails();
@@ -73,8 +80,23 @@ const VideoDetails = () => {
   const copySourceUrl = () => {
     if (video?.sourceUrl) {
       navigator.clipboard.writeText(video.sourceUrl);
+      alert('URL copied to clipboard!');
     }
   };
+  
+  // Get relative time
+  const getRelativeTime = (dateString) => {
+    if (!dateString) return 'Unknown date';
+    try {
+      const date = new Date(dateString);
+      return formatDistanceToNow(date, { addSuffix: true });
+    } catch (e) {
+      return 'Unknown date';
+    }
+  };
+
+  // Format video title
+  const videoTitle = video?.title || 'YouTube Video';
 
   return (
     <Container maxWidth="lg">
@@ -113,113 +135,140 @@ const VideoDetails = () => {
         </Alert>
       ) : video ? (
         <>
-          <Card sx={{ mb: 4 }}>
-            <CardContent>
-              <Typography variant="h6" gutterBottom>
-                YouTube Video Information
-              </Typography>
+          <Paper elevation={2} sx={{ mb: 4, p: 3 }}>
+            <Typography variant="h5" gutterBottom>
+              {videoTitle}
+            </Typography>
+            
+            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 3 }}>
+              <Chip 
+                label={video.status === 'completed' ? 'Completed' : 'Processing'} 
+                color={video.status === 'completed' ? 'success' : 'warning'} 
+              />
               
-              <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                <Typography variant="body2" sx={{ mr: 2 }}>
-                  Source URL:
-                </Typography>
-                <Typography 
-                  variant="body2" 
-                  component="div" 
-                  sx={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    color: 'text.secondary',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                    maxWidth: '70%'
-                  }}
-                >
-                  {video.sourceUrl}
-                  <Button 
-                    size="small" 
-                    startIcon={<LinkIcon />}
-                    onClick={copySourceUrl}
-                    sx={{ ml: 1 }}
-                  >
-                    Copy
-                  </Button>
-                </Typography>
-              </Box>
-              
-              <Typography variant="body2" sx={{ mb: 2 }}>
-                Request ID: {video.requestId}
-              </Typography>
-              
-              <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                <Typography variant="body2" sx={{ mr: 2 }}>
-                  Status:
-                </Typography>
+              {video.created_at && (
                 <Chip 
-                  label={video.status} 
-                  color={video.status === 'completed' ? 'success' : 'warning'} 
-                  size="small" 
+                  label={`Created ${getRelativeTime(video.created_at)}`} 
+                  icon={<AccessTimeIcon />}
+                  variant="outlined"
                 />
-              </Box>
-              
-              {video.status === 'processing' && (
-                <Box sx={{ mt: 2 }}>
-                  <Typography variant="body2" color="text.secondary" gutterBottom>
-                    Your video is being processed. This may take a few minutes.
-                  </Typography>
-                  <LinearProgress />
-                </Box>
               )}
-            </CardContent>
-          </Card>
-          
-          {video.status === 'completed' && video.finalVideoUrl && (
-            <Box sx={{ mb: 4 }}>
-              <Typography variant="h6" gutterBottom>
-                Final Compilation
-              </Typography>
               
-              <Box 
+              <Chip 
+                label={`${video.clips?.length || 0} clips`} 
+                icon={<VideocamIcon />}
+                variant="outlined"
+              />
+            </Box>
+            
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+              <Typography variant="body2" sx={{ mr: 2 }}>
+                Source URL:
+              </Typography>
+              <Typography 
+                variant="body2" 
+                component="div" 
                 sx={{ 
-                  position: 'relative', 
-                  pt: '56.25%', /* 16:9 Aspect Ratio */
-                  bgcolor: 'black',
-                  borderRadius: 1,
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  color: 'text.secondary',
                   overflow: 'hidden',
-                  mb: 2
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  maxWidth: { xs: '200px', sm: '400px', md: '600px' }
                 }}
               >
-                <video
-                  src={video.finalVideoUrl}
-                  controls
-                  style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'contain'
-                  }}
-                />
-              </Box>
-              
-              <Button 
-                variant="contained" 
-                href={video.finalVideoUrl}
-                target="_blank"
-                fullWidth
-              >
-                Download Compilation
-              </Button>
+                {video.sourceUrl}
+                <Button 
+                  size="small" 
+                  startIcon={<LinkIcon />}
+                  onClick={copySourceUrl}
+                  sx={{ ml: 1 }}
+                >
+                  Copy
+                </Button>
+              </Typography>
             </Box>
-          )}
+            
+            {video.finalVideoUrl && (
+              <Box sx={{ mt: 4 }}>
+                <Typography variant="h6" gutterBottom>
+                  Full Compilation
+                </Typography>
+                
+                <Box sx={{ position: 'relative', paddingTop: '56.25%', backgroundColor: '#000', mb: 2 }}>
+                  <ReactPlayer
+                    url={video.finalVideoUrl}
+                    width="100%"
+                    height="100%"
+                    style={{ position: 'absolute', top: 0, left: 0 }}
+                    controls
+                    config={{
+                      file: {
+                        attributes: {
+                          controlsList: 'nodownload',
+                          disablePictureInPicture: true,
+                          preload: 'auto'
+                        }
+                      }
+                    }}
+                  />
+                </Box>
+                
+                <Button
+                  variant="contained"
+                  startIcon={<GetAppIcon />}
+                  href={video.finalVideoUrl}
+                  target="_blank"
+                  fullWidth
+                >
+                  Download Compilation
+                </Button>
+              </Box>
+            )}
+            
+            {video.status === 'processing' && (
+              <Box sx={{ mt: 3 }}>
+                <Typography variant="body2" color="text.secondary" gutterBottom>
+                  Your video is being processed. This may take a few minutes.
+                </Typography>
+                <LinearProgress />
+              </Box>
+            )}
+          </Paper>
           
           {video.clips && video.clips.length > 0 ? (
             <Box>
-              <Typography variant="h5" gutterBottom>
-                Individual Clips
-              </Typography>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <Typography variant="h5">
+                  Generated Clips
+                </Typography>
+                
+                <Button 
+                  variant="contained" 
+                  color="primary"
+                  startIcon={<GetAppIcon />}
+                  onClick={() => {
+                    // Download all clips in sequence
+                    video.clips.forEach((clip, index) => {
+                      if (clip.url) {
+                        // Small delay between downloads to avoid browser blocking
+                        setTimeout(() => {
+                          const link = document.createElement('a');
+                          link.href = clip.url;
+                          link.download = `${videoTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_clip_${index + 1}.mp4`;
+                          link.target = '_blank';
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                        }, index * 300);
+                      }
+                    });
+                  }}
+                >
+                  Download All Clips
+                </Button>
+              </Box>
               
               <Typography variant="body2" color="text.secondary" paragraph>
                 {video.clips.length} clips were generated from this video.
@@ -227,9 +276,14 @@ const VideoDetails = () => {
               
               <Divider sx={{ mb: 3 }} />
               
-              {video.clips.map((clip, index) => (
-                <ClipCard key={index} clip={clip} index={index} />
-              ))}
+              <Grid container spacing={3}>
+                {console.log('Clips data:', video.clips)}
+                {video.clips.map((clip, index) => (
+                  <Grid item key={index} xs={12} sm={12} md={6} lg={4}>
+                    <ClipCard clip={clip} />
+                  </Grid>
+                ))}
+              </Grid>
             </Box>
           ) : video.status === 'completed' ? (
             <Alert severity="info" sx={{ mt: 2 }}>

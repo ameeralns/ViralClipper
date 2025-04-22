@@ -10,6 +10,9 @@ const OpenAI = require('openai');
 const PocketBase = require('pocketbase/cjs');
 const ffmpeg = require('fluent-ffmpeg');
 const ytdlp = require('yt-dlp-exec');
+const { db, storage } = require('./firebaseAdmin');
+const { ref, uploadBytes, getDownloadURL } = require('firebase-admin/storage');
+const admin = require('firebase-admin');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -98,10 +101,18 @@ async function downloadYouTubeVideo(videoUrl) {
         console.log('Starting download with yt-dlp...');
         console.log('Output path:', outputPath);
         
-        // Use yt-dlp to download the video with audio (removing extractAudio option)
+        // First get video info to extract title
+        const videoInfo = await ytdlp(videoUrl, {
+            dumpSingleJson: true,
+            noCheckCertificates: true,
+            noWarnings: true
+        });
+        
+        console.log('Got video info, title:', videoInfo.title);
+        
+        // Use yt-dlp to download the video with audio
         await ytdlp(videoUrl, {
             output: outputPath,
-            // Removed extractAudio to get both video and audio
             format: 'best[ext=mp4]/best', // Prefer MP4 format
             noCheckCertificates: true,
             preferFreeFormats: true,
@@ -121,7 +132,8 @@ async function downloadYouTubeVideo(videoUrl) {
                 console.log(`YouTube video download completed with auto extension: ${mp4Path} (${stats.size} bytes)`);
                 return {
                     filePath: mp4Path,
-                    publicUrl: `${process.env.BASE_URL}/temp/${filename}.mp4`
+                    publicUrl: `${process.env.BASE_URL}/temp/${filename}.mp4`,
+                    title: videoInfo.title || 'YouTube Video'
                 };
             } else {
                 // List directory contents for debugging
@@ -135,7 +147,8 @@ async function downloadYouTubeVideo(videoUrl) {
         // Return both the local file path and public URL
         return {
             filePath: outputPath,
-            publicUrl: `${process.env.BASE_URL}/temp/${filename}`
+            publicUrl: `${process.env.BASE_URL}/temp/${filename}`,
+            title: videoInfo.title || 'YouTube Video'
         };
     } catch (error) {
         console.error('YouTube download error:', error);
@@ -437,6 +450,119 @@ apiRouter.get('/health', (req, res) => {
     });
 });
 
+async function processClip(inputFile, startTime, endTime, clipIndex, clipCaption, requestId, sentiment_score, quote, userId = 'anonymous', videoUrl = '', videoTitle = '') {
+    return new Promise((resolve, reject) => {
+        try {
+            const outputFilename = `clip_${requestId}_${clipIndex}.mp4`;
+            const outputPath = path.join(PROCESSED_CLIPS_DIR, outputFilename);
+            
+            // First use FFmpeg to create the clip
+            ffmpeg(inputFile)
+                .setStartTime(startTime)
+                .setDuration((endTime - startTime) + 1.5)
+                // Preserve quality with high-quality settings
+                .outputOptions([
+                    '-c:v libx264',
+                    '-preset slow',
+                    '-crf 18',
+                    '-c:a aac',
+                    '-b:a 192k',
+                    '-pix_fmt yuv420p'
+                ])
+                .output(outputPath)
+                .on('end', async () => {
+                    console.log(`Clip ${clipIndex} completed: ${outputPath}`);
+                    
+                    // After the clip is created, upload it to Firebase Storage
+                    if (process.env.FIREBASE_STORAGE_BUCKET && db) {
+                        try {
+                            console.log(`Uploading clip ${clipIndex} to Firebase Storage...`);
+                            
+                            // Create a reference to the clip in Firebase Storage
+                            const storageRef = storage.bucket().file(`clips/${userId}/${requestId}/${outputFilename}`);
+                            
+                            // Read the local file and upload it
+                            const fileContent = fs.readFileSync(outputPath);
+                            
+                            // Set metadata including content type and video info
+                            const metadata = {
+                                contentType: 'video/mp4',
+                                metadata: {
+                                    userId: userId,
+                                    clipIndex: clipIndex,
+                                    clipCaption: clipCaption,
+                                    quote: quote,
+                                    sentimentScore: sentiment_score,
+                                    requestId: requestId,
+                                    videoTitle: videoTitle
+                                }
+                            };
+                            
+                            // Upload the file
+                            await storageRef.save(fileContent, {
+                                metadata: metadata
+                            });
+                            
+                            // Get the public URL for the file
+                            const publicUrl = `https://storage.googleapis.com/${process.env.FIREBASE_STORAGE_BUCKET}/clips/${userId}/${requestId}/${outputFilename}`;
+                            
+                            // Add the clip to Firestore
+                            const clipData = {
+                                url: publicUrl,
+                                clip_caption: clipCaption,
+                                start_time: startTime,
+                                end_time: endTime,
+                                quote: quote,
+                                sentiment_score: sentiment_score,
+                                created_at: new Date(),
+                                videoTitle: videoTitle // Add the video title to each clip
+                            };
+                            
+                            // First check if this video document exists
+                            const videoRef = db.collection('videos').doc(requestId);
+                            const videoDoc = await videoRef.get();
+                            
+                            if (videoDoc.exists) {
+                                // Update the existing document by adding this clip
+                                await videoRef.update({
+                                    clips: admin.firestore.FieldValue.arrayUnion(clipData),
+                                    updated_at: admin.firestore.FieldValue.serverTimestamp()
+                                });
+                                console.log(`Added clip ${clipIndex} to existing video document`);
+                            } else {
+                                // Create a new video document
+                                await videoRef.set({
+                                    sourceUrl: videoUrl,
+                                    title: videoTitle || (videoUrl.includes('youtube.com') ? 'YouTube Video' : 'Uploaded Video'),
+                                    userId: userId,
+                                    status: 'completed',
+                                    created_at: admin.firestore.FieldValue.serverTimestamp(),
+                                    updated_at: admin.firestore.FieldValue.serverTimestamp(),
+                                    clips: [clipData]
+                                });
+                                console.log(`Created new video document with clip ${clipIndex}`);
+                            }
+                            
+                            console.log(`Clip ${clipIndex} uploaded to Firebase Storage: ${publicUrl}`);
+                        } catch (storageError) {
+                            console.error(`Error uploading clip ${clipIndex} to Firebase Storage:`, storageError);
+                        }
+                    }
+                    
+                    resolve(outputPath);
+                })
+                .on('error', (err) => {
+                    console.error(`Error processing clip ${clipIndex}:`, err);
+                    reject(err);
+                })
+                .run();
+        } catch (error) {
+            console.error(`Error initiating clip ${clipIndex} processing:`, error);
+            reject(error);
+        }
+    });
+}
+
 apiRouter.get('/transcribe', async (req, res) => {
     const { videoUrl, userId } = req.query;
     console.log('videoUrl =', videoUrl);
@@ -449,6 +575,7 @@ apiRouter.get('/transcribe', async (req, res) => {
     try {
         let mediaFilePath;
         let localVideoUrl = videoUrl;
+        let videoTitle = null;
         
         // If this is a YouTube URL, download it first
         if (isYouTubeUrl(videoUrl)) {
@@ -457,7 +584,9 @@ apiRouter.get('/transcribe', async (req, res) => {
                 const downloadResult = await downloadYouTubeVideo(videoUrl);
                 mediaFilePath = downloadResult.filePath;
                 localVideoUrl = downloadResult.publicUrl;
+                videoTitle = downloadResult.title;
                 console.log('Downloaded to:', mediaFilePath);
+                console.log('Video title:', videoTitle);
             } catch (downloadError) {
                 console.error('YouTube download failed:', downloadError);
                 return res.status(500).json({
@@ -524,7 +653,8 @@ apiRouter.get('/transcribe', async (req, res) => {
                     sourceUrl: videoUrl,
                     videoUrl: localVideoUrl,
                     requestId: requestId,
-                    userId: userId || 'anonymous'
+                    userId: userId || 'anonymous',
+                    title: videoTitle
                 });
                 console.log('PocketBase record created:', record);
             } catch (pbError) {
@@ -668,33 +798,20 @@ apiRouter.get('/transcribe', async (req, res) => {
                     const videoUrl = updatedRecord.videoUrl;
                     
                     // Process each clip
-                    const clipPromises = updatedRecord.viralClips.map(async (clip, index) => {
-                        const clipFileName = `clip_${requestId}_${index}.mp4`;
-                        const clipOutputPath = path.join(PROCESSED_CLIPS_DIR, clipFileName);
-                        return new Promise((resolve, reject) => {
-                            ffmpeg(videoUrl)
-                                .setStartTime(clip.start_time)
-                                .setDuration((clip.end_time - clip.start_time) + 1.5)
-                                // Preserve quality with high-quality settings
-                                .outputOptions([
-                                    '-c:v libx264',
-                                    '-preset slow',
-                                    '-crf 18',
-                                    '-c:a aac',
-                                    '-b:a 192k',
-                                    '-pix_fmt yuv420p'
-                                ])
-                                .output(clipOutputPath)
-                                .on('end', () => {
-                                    console.log(`Clip ${index} completed: ${clipOutputPath}`);
-                                    resolve(clipOutputPath);
-                                })
-                                .on('error', (err) => {
-                                    console.error(`Error processing clip ${index}:`, err);
-                                    reject(err);
-                                })
-                                .run();
-                        });
+                    const clipPromises = updatedRecord.viralClips.map((clip, index) => {
+                        return processClip(
+                            mediaFilePath,
+                            clip.start_time,
+                            clip.end_time,
+                            index,
+                            clip.clip_caption,
+                            requestId,
+                            clip.sentiment_score,
+                            clip.quote,
+                            userId || 'anonymous',
+                            videoUrl,
+                            videoTitle
+                        );
                     });
 
                     try {
@@ -751,33 +868,20 @@ apiRouter.get('/transcribe', async (req, res) => {
                 console.log('Starting FFmpeg processing...');
                 
                 // Process each clip
-                const clipPromises = parsedResponse.map(async (clip, index) => {
-                    const clipFileName = `clip_${requestId}_${index}.mp4`;
-                    const clipOutputPath = path.join(PROCESSED_CLIPS_DIR, clipFileName);
-                    return new Promise((resolve, reject) => {
-                        ffmpeg(localVideoUrl)
-                            .setStartTime(clip.start_time)
-                            .setDuration((clip.end_time - clip.start_time) + 1.5)
-                            // Preserve quality with high-quality settings
-                            .outputOptions([
-                                '-c:v libx264',
-                                '-preset slow',
-                                '-crf 18',
-                                '-c:a aac',
-                                '-b:a 192k',
-                                '-pix_fmt yuv420p'
-                            ])
-                            .output(clipOutputPath)
-                            .on('end', () => {
-                                console.log(`Clip ${index} completed: ${clipOutputPath}`);
-                                resolve(clipOutputPath);
-                            })
-                            .on('error', (err) => {
-                                console.error(`Error processing clip ${index}:`, err);
-                                reject(err);
-                            })
-                            .run();
-                    });
+                const clipPromises = parsedResponse.map((clip, index) => {
+                    return processClip(
+                        mediaFilePath,
+                        clip.start_time,
+                        clip.end_time,
+                        index,
+                        clip.clip_caption,
+                        requestId,
+                        clip.sentiment_score,
+                        clip.quote,
+                        userId || 'anonymous',
+                        videoUrl,
+                        videoTitle
+                    );
                 });
 
                 try {
@@ -882,137 +986,211 @@ apiRouter.get('/transcribe', async (req, res) => {
     }
 });
 
-apiRouter.get('/reels', async (req, res) => {
-    const { userId } = req.query;
-
-    if (USE_POCKETBASE && pb) {
-        try {
-            // Set default filter if userId is not provided
-            let filter = userId ? `userId = "${userId}"` : '';
-            
-            // Query PocketBase for records
-            const records = await pb.collection('videos').getList(1, 50, {
-                filter: filter,
-                sort: '-created'  // Sort by newest first
-            });
-
-            res.json({
-                success: true,
-                total: records.totalItems,
-                reels: records.items
-            });
-        } catch (error) {
-            console.error('Error fetching reels:', error);
-            res.status(500).json({ 
-                error: 'Failed to fetch reels',
-                details: error.message
-            });
-        }
-    } else {
-        // Return empty response if PocketBase is disabled
-        res.json({
-            success: true,
-            total: 0,
-            reels: [],
-            message: 'PocketBase integration is disabled'
-        });
-    }
-});
-
-// Simple endpoint to get info about a specific processed video
+// Get video details by requestId
 apiRouter.get('/video/:requestId', async (req, res) => {
     const { requestId } = req.params;
     
-    if (USE_POCKETBASE && pb) {
-        try {
-            const records = await pb.collection('videos').getList(1, 1, {
-                filter: `requestId = "${requestId}"`
-            });
-
-            if (records.items.length === 0) {
-                return res.status(404).json({ 
-                    error: 'Video not found',
-                    requestId
-                });
-            }
-
-            const video = records.items[0];
-            const clipsUrls = [];
-            
-            // Add URLs for individual clips
-            if (video.viralClips && Array.isArray(video.viralClips)) {
-                video.viralClips.forEach((clip, index) => {
-                    clipsUrls.push({
-                        caption: clip.clip_caption,
-                        url: `${process.env.BASE_URL}/clips/clip_${requestId}_${index}.mp4`,
-                        start_time: clip.start_time,
-                        end_time: clip.end_time,
-                        quote: clip.quote,
-                        sentiment_score: clip.sentiment_score
-                    });
-                });
-            }
-
-            res.json({
-                requestId: video.requestId,
-                sourceUrl: video.videoUrl,
-                finalVideoUrl: video.finalVideoUrl,
-                createdAt: video.created,
-                clips: clipsUrls,
-                status: video.finalVideoUrl ? 'completed' : 'processing'
-            });
-        } catch (error) {
-            console.error('Error fetching video details:', error);
-            res.status(500).json({ 
-                error: 'Failed to fetch video details',
-                details: error.message
-            });
-        }
-    } else {
-        // Try to locate video files by requestId
-        const clipPattern = new RegExp(`clip_${requestId}_\\d+\\.mp4$`);
-        const finalPattern = new RegExp(`final_${requestId}\\.mp4$`);
-        
-        try {
-            const files = fs.readdirSync(PROCESSED_CLIPS_DIR);
-            const clips = files.filter(file => clipPattern.test(file));
-            const final = files.find(file => finalPattern.test(file));
-            
-            if (clips.length === 0 && !final) {
-                return res.status(404).json({ 
-                    error: 'Video not found',
-                    requestId
-                });
-            }
-            
-            const clipsUrls = clips.map(clip => {
-                // Extract index from filename
-                const index = parseInt(clip.match(/clip_[^_]+_(\d+)\.mp4$/)[1], 10);
-                return {
-                    caption: `Clip ${index + 1}`,
-                    url: `${process.env.BASE_URL}/clips/${clip}`,
-                    index
-                };
-            });
-            
-            // Sort clips by index
-            clipsUrls.sort((a, b) => a.index - b.index);
-            
-            res.json({
-                requestId,
-                finalVideoUrl: final ? `${process.env.BASE_URL}/clips/${final}` : null,
-                clips: clipsUrls,
-                status: final ? 'completed' : 'processing',
-                message: 'Limited info available (PocketBase disabled)'
-            });
-        } catch (error) {
-            console.error('Error fetching video files:', error);
-            res.status(500).json({ 
-                error: 'Failed to fetch video details',
-                details: error.message
-            });
-        }
+    if (!requestId) {
+        return res.status(400).json({ error: 'requestId is required' });
     }
+    
+    try {
+        if (db) {
+            console.log('Fetching video from Firestore:', requestId);
+            
+            // Get the video document from Firestore
+            const videoRef = db.collection('videos').doc(requestId);
+            const videoDoc = await videoRef.get();
+            
+            if (!videoDoc.exists) {
+                console.log('Video not found in Firestore');
+                
+                // Fall back to local file system if Firebase doesn't have the record
+                // This is for backward compatibility
+                const finalVideoPath = path.join(PROCESSED_CLIPS_DIR, `final_${requestId}.mp4`);
+                
+                if (fs.existsSync(finalVideoPath)) {
+                    // Local processing output exists
+                    const finalVideoUrl = `${process.env.BASE_URL}/clips/final_${requestId}.mp4`;
+                    
+                    // Count the individual clips
+                    const clipPattern = new RegExp(`clip_${requestId}_\\d+\\.mp4$`);
+                    const clipFiles = fs.readdirSync(PROCESSED_CLIPS_DIR)
+                        .filter(filename => clipPattern.test(filename))
+                        .sort((a, b) => {
+                            const indexA = parseInt(a.split('_').pop().split('.')[0]);
+                            const indexB = parseInt(b.split('_').pop().split('.')[0]);
+                            return indexA - indexB;
+                        });
+                    
+                    // Build clips array from local files
+                    const clips = clipFiles.map((filename, index) => {
+                        const clipUrl = `${process.env.BASE_URL}/clips/${filename}`;
+                        return {
+                            url: clipUrl,
+                            index: index,
+                            clip_caption: `Clip ${index + 1}`
+                        };
+                    });
+                    
+                    return res.json({
+                        requestId,
+                        sourceUrl: 'Unknown (processed before Firebase integration)',
+                        status: 'completed',
+                        clips,
+                        finalVideoUrl
+                    });
+                }
+                
+                return res.status(404).json({ error: 'Video not found' });
+            }
+            
+            // Return the video data
+            const videoData = videoDoc.data();
+            return res.json({
+                requestId,
+                id: requestId,
+                ...videoData
+            });
+        } else {
+            // Firebase is not configured, fall back to local file system
+            // ... (local file system handling code) ...
+            return res.status(501).json({ error: 'Firestore not enabled' });
+        }
+    } catch (error) {
+        console.error('Error fetching video details:', error);
+        return res.status(500).json({ error: 'Failed to fetch video details' });
+    }
+});
+
+// List videos endpoint
+apiRouter.get('/reels', async (req, res) => {
+    const { userId } = req.query;
+    
+    try {
+        if (db) {
+            console.log('Fetching videos from Firestore');
+            
+            // Create a query to get videos
+            let videosQuery = db.collection('videos');
+            
+            // Add filter by userId if provided
+            if (userId && userId !== 'anonymous' && userId !== 'undefined') {
+                videosQuery = videosQuery.where('userId', '==', userId);
+            }
+            
+            // Order by creation date
+            videosQuery = videosQuery.orderBy('created_at', 'desc');
+            
+            // Execute the query
+            const snapshot = await videosQuery.get();
+            
+            // Transform the data
+            const videos = snapshot.docs.map(doc => ({
+                id: doc.id,
+                requestId: doc.id, // Include requestId for backward compatibility
+                ...doc.data(),
+                // Convert timestamps to JSON-serializable format
+                created_at: doc.data().created_at ? doc.data().created_at.toDate().toISOString() : null,
+                updated_at: doc.data().updated_at ? doc.data().updated_at.toDate().toISOString() : null
+            }));
+            
+            return res.json(videos);
+        } else {
+            // Firebase is not configured, fall back to local file system
+            return res.status(501).json({ error: 'Firestore not enabled' });
+        }
+    } catch (error) {
+        console.error('Error fetching videos:', error);
+        return res.status(500).json({ error: 'Failed to fetch videos' });
+    }
+});
+
+// Add a proxy endpoint for fetching videos from GCS
+app.get('/api/proxy-video', async (req, res) => {
+  const videoUrl = req.query.url;
+  
+  if (!videoUrl) {
+    return res.status(400).send('Video URL is required');
+  }
+  
+  try {
+    // Extract the path from the URL (after storage.googleapis.com/bucket-name/)
+    const urlObj = new URL(videoUrl);
+    const pathMatch = urlObj.pathname.match(/\/([^\/]+)\/(.+)/);
+    
+    if (!pathMatch || !storage) {
+      // Fall back to direct request if we can't extract the path or Firebase storage isn't set up
+      const response = await axios({
+        method: 'get',
+        url: videoUrl,
+        responseType: 'stream'
+      });
+      
+      // Set CORS headers
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+      
+      // Forward content type header
+      res.setHeader('Content-Type', response.headers['content-type']);
+      
+      // Pipe the video stream to the response
+      response.data.pipe(res);
+      return;
+    }
+    
+    // Use Firebase Admin SDK to get a signed URL
+    const bucket = storage.bucket(pathMatch[1]);
+    const file = bucket.file(pathMatch[2]);
+    
+    // Generate a signed URL that expires in 1 hour
+    const [signedUrl] = await file.getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 3600000 // 1 hour
+    });
+    
+    console.log('Generated signed URL for video access');
+    
+    // Redirect to the signed URL
+    res.redirect(signedUrl);
+  } catch (error) {
+    console.error('Error proxying video:', error);
+    
+    // Try fallback to direct access as last resort
+    try {
+      console.log('Trying direct file access as fallback...');
+      // Try direct streaming from Firebase Storage
+      const bucket = storage.bucket(process.env.FIREBASE_STORAGE_BUCKET);
+      
+      // Extract the file path from the URL
+      const urlObj = new URL(videoUrl);
+      const filePath = urlObj.pathname.split('/').slice(2).join('/');
+      
+      console.log('Accessing file:', filePath);
+      const file = bucket.file(filePath);
+      
+      // Check if file exists
+      const [exists] = await file.exists();
+      if (!exists) {
+        return res.status(404).send('Video file not found');
+      }
+      
+      // Stream the file directly
+      const readStream = file.createReadStream();
+      
+      // Set headers
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+      
+      // Pipe file to response
+      readStream.pipe(res);
+    } catch (fallbackError) {
+      console.error('Fallback access failed:', fallbackError);
+      res.status(500).send('Error fetching video');
+    }
+  }
 });
 
 // Mount API routes with /api prefix

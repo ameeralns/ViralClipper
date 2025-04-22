@@ -14,58 +14,72 @@ import {
 import VideoFileIcon from '@mui/icons-material/VideoFile';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import VideocamIcon from '@mui/icons-material/Videocam';
 import { formatDistanceToNow } from 'date-fns';
 
 const VideoGalleryItem = ({ video }) => {
   const navigate = useNavigate();
   
   const handleViewDetails = () => {
-    navigate(`/video/${video.requestId}`);
+    // Navigate using the document ID from Firestore which is stored in id
+    navigate(`/video/${video.id}`);
   };
-  
-  // If we have a final video URL, use it as thumbnail, otherwise use a placeholder
-  const thumbnailUrl = video.finalVideoUrl || null;
   
   // Get relative time (e.g. "3 hours ago")
   const getRelativeTime = (dateString) => {
+    if (!dateString) return 'Unknown date';
     try {
       const date = new Date(dateString);
       return formatDistanceToNow(date, { addSuffix: true });
     } catch (e) {
-      return 'Unknown time';
+      return 'Unknown date';
     }
   };
   
   // Count clips
-  const clipCount = video.viralClips?.length || 0;
+  const clipCount = video.clips?.length || 0;
   
   // Processing status
-  const isProcessing = !video.finalVideoUrl;
+  const isProcessing = video.status === 'processing';
+  
+  // Format video title
+  const videoTitle = video.title || 'YouTube Video';
 
   return (
     <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <CardActionArea onClick={handleViewDetails} sx={{ flexGrow: 1 }}>
-        <Box sx={{ position: 'relative' }}>
-          {thumbnailUrl ? (
-            <CardMedia
-              component="img"
-              height="140"
-              image={thumbnailUrl}
-              alt={`Video ${video.requestId}`}
-            />
-          ) : (
-            <Box 
+        <Box sx={{ position: 'relative', paddingTop: '56.25%' /* 16:9 aspect ratio */ }}>
+          <Box 
+            sx={{ 
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              display: 'flex', 
+              flexDirection: 'column',
+              alignItems: 'center', 
+              justifyContent: 'center',
+              bgcolor: 'primary.dark',
+              color: 'white',
+              padding: 2
+            }}
+          >
+            <VideoFileIcon sx={{ fontSize: 60, mb: 1 }} />
+            <Typography 
+              variant="body2" 
               sx={{ 
-                height: 140, 
-                display: 'flex', 
-                alignItems: 'center', 
-                justifyContent: 'center',
-                bgcolor: 'grey.200' 
+                textAlign: 'center',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical'
               }}
             >
-              <VideoFileIcon sx={{ fontSize: 60, color: 'text.secondary' }} />
-            </Box>
-          )}
+              {videoTitle}
+            </Typography>
+          </Box>
           
           {isProcessing && (
             <Chip
@@ -76,6 +90,7 @@ const VideoGalleryItem = ({ video }) => {
                 position: 'absolute',
                 top: 8,
                 right: 8,
+                zIndex: 1
               }}
             />
           )}
@@ -83,27 +98,23 @@ const VideoGalleryItem = ({ video }) => {
         
         <CardContent sx={{ flexGrow: 1 }}>
           <Typography variant="h6" component="div" noWrap>
-            YouTube Video
+            {videoTitle}
           </Typography>
           
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-            ID: {video.requestId.substring(0, 10)}...
-          </Typography>
-          
-          <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 1, mt: 1 }}>
             <AccessTimeIcon fontSize="small" sx={{ mr: 0.5, color: 'text.secondary' }} />
             <Typography variant="body2" color="text.secondary">
-              {getRelativeTime(video.created)}
+              {getRelativeTime(video.created_at)}
             </Typography>
           </Box>
           
           {clipCount > 0 && (
-            <Chip 
-              label={`${clipCount} clips`} 
-              size="small" 
-              color="primary" 
-              variant="outlined" 
-            />
+            <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <VideocamIcon fontSize="small" sx={{ mr: 0.5, color: 'text.secondary' }} />
+              <Typography variant="body2" color="text.secondary">
+                {clipCount} clips
+              </Typography>
+            </Box>
           )}
         </CardContent>
       </CardActionArea>

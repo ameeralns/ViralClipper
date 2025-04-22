@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["*"],
+    "method": ["GET", "HEAD", "OPTIONS"],
+    "responseHeader": ["Content-Type", "Content-Length", "Content-Disposition", "Content-Encoding", "Content-Range", "X-Download-Options"],
+    "maxAgeSeconds": 3600
+  }
+] 
