@@ -1,6 +1,8 @@
 import axios from 'axios';
 
-const API_BASE_URL = '/api';
+// Use the environment variable REACT_APP_API_URL for the production endpoint
+// Fall back to relative path /api for local development
+const API_BASE_URL = process.env.REACT_APP_API_URL ? `${process.env.REACT_APP_API_URL}/api` : '/api';
 
 const api = {
   // Start video processing with a YouTube URL

@@ -22,9 +22,9 @@ const PORT = process.env.PORT || 3000;
 app.use(cors({
   origin: [
     'http://localhost:3000',
-    // Replace the line below with your actual Vercel URL after deployment
-    // Example: 'https://viralclipper.vercel.app'
-    'https://viralclipper.vercel.app' 
+    'https://viralclipper.vercel.app',
+    'https://viral-clipper.vercel.app',
+    'https://viralclipper-git-main-ameeralns.vercel.app'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   credentials: true
@@ -1239,6 +1239,16 @@ app.get('/api/proxy-video', async (req, res) => {
 
 // Mount API routes with /api prefix
 app.use('/api', apiRouter);
+
+// Root route for health check
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'YouTube to Viral Clips Processor API is running',
+    api_docs: '/api',
+    health_check: '/api/health'
+  });
+});
 
 // Serve frontend static files from the React build directory
 // This code should be after all API routes
