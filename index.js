@@ -13,12 +13,24 @@ const ytdlp = require('yt-dlp-exec');
 const { db, storage } = require('./firebaseAdmin');
 const { ref, uploadBytes, getDownloadURL } = require('firebase-admin/storage');
 const admin = require('firebase-admin');
+const cors = require('cors');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// Setup CORS
+app.use(cors({
+  origin: [
+    'http://localhost:3000',
+    'https://your-vercel-app-name.vercel.app', // Replace with your actual Vercel URL once deployed
+    /\.vercel\.app$/ // Allow all subdomains on vercel.app
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  credentials: true
+}));
 
 // Define directories for local storage
 const TRANSCRIPTIONS_DIR = path.join(__dirname, 'transcriptions');
@@ -1100,7 +1112,7 @@ apiRouter.get('/reels', async (req, res) => {
             // Firebase is not configured, fall back to local file system
             return res.status(501).json({ error: 'Firestore not enabled' });
         }
-    } catch (error) {
+        } catch (error) {
         console.error('Error fetching videos:', error);
         return res.status(500).json({ error: 'Failed to fetch videos' });
     }
@@ -1221,7 +1233,7 @@ app.get('/api/proxy-video', async (req, res) => {
   } catch (error) {
     console.error('Error proxying video:', error);
     res.status(500).send('Error fetching video');
-  }
+    }
 });
 
 // Mount API routes with /api prefix
